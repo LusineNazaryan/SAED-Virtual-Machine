@@ -1,146 +1,163 @@
 #include "parser.h"
+#include <iostream>
+#include <cmath>
+using namespace std;
 
-CParser::CParser(QVector<DataToken> data_tokens_, QVector<CodeToken> code_tokens_) :
-m_dataTokens(data_tokens_), m_codeTokens(code_tokens_) {}
-
-void CParser::output()
+CParser::CParser(QDataStream& out, QVector<SDataToken> dataTokens, QVector<SCodeToken> codeTokens) :
+m_out(out), m_dataTokens(dataTokens), m_codeTokens(codeTokens)
 {
-	QString FILENAME = "test.asm";
-	QFile fout(FILENAME);
-	if (!fout.open(QIODevice::WriteOnly))
-	{
-		qDebug() << "ERROR!!!";
-	}
-	QDataStream out(&fout);
+}
+
+void CParser::work()
+{
+	writeHeader(m_out);
 
 	if (!m_dataTokens.isEmpty())
 	{
-		readDataTokens(out);
+		writeDataSection(m_out);
 	}
-	readCodeTokens(out);
+	writeCodeSection(m_out);
+	if (!m_dataTokens.isEmpty())
+	{
+		writeDataTableSection(m_out);
+	}
+	writeCodeTableSection(m_out);
 }
 
-void CParser::readCodeTokens(QDataStream& out)
+SHeader CParser::createHeader(QDataStream& out)
 {
-	Opcode o_opcode;
-	QVector<uint16> args;
+	QString signature = "SAED/VirtualMachine/ExeFile";
+	int version = 1;
+	int offset = sizeof signature + sizeof(int);
 
-	for (QVector<CodeToken>::iterator it = m_codeTokens.begin(); it != m_codeTokens.end(); ++it)
+	SHeader header(signature, version);
+
+	if (!m_dataTokens.isEmpty())
 	{
-		QString instrName = (*it).name;
-		Pair pair = inst[instrName];
-		o_opcode.instr = static_cast<uint16>(pair.instr_code);
-		int argCount = inst[instrName].argument_count;
-		while (argCount)
+		SHeaderTable headerTable(ESectionType::Data, offset, m_dataTokens.size());
+		header.recordTable.push_back(headerTable);
+		offset += writeDataSection(out);
+	}
+
+	{
+		SHeaderTable headerTable(ESectionType::Code, offset, m_codeTokens.size());
+		header.recordTable.push_back(headerTable);
+		offset += writeCodeSection(out);
+	}
+
+	if (!m_dataTokens.isEmpty())
+	{
+		SHeaderTable headerTable(ESectionType::DataTable, offset, m_dataTokens.size());
+		header.recordTable.push_back(headerTable);
+		offset += writeDataTableSection(out);
+	}
+	
+	/*
+	{
+	SHeaderTable headerTable(ESectionType::CodeTable, offset, m_dataTokens.size());
+	header.arrayTable.push_back(headerTable);
+	offset += writeCodeTableSection(m_out);
+	}
+	
+	*/
+	header.recordCount = header.recordTable.size();
+	return header;
+}
+
+void CParser::writeHeader(QDataStream& out)
+{
+	SHeader header = createHeader(out);
+
+	out << header.signature;
+	out << header.version;
+	out << header.recordCount;
+
+	for (int i = 0; i < header.recordCount; ++i)
+	{
+		out << static_cast<int>(header.recordTable[i].type);
+		out << header.recordTable[i].offset;
+		out << header.recordTable[i].size;
+	}
+}
+
+int CParser::writeCodeSection(QDataStream& out)
+{
+	int offset = 0;			//size of codeSection
+
+	for (int i = 0; i < m_codeTokens.size(); i++)
+	{
+		out << m_codeTokens[i].opcode.opcode;
+		offset += sizeof m_codeTokens[i].opcode.opcode;
+		for (int j = 0; j < m_codeTokens[i].argValue.size(); j++)
 		{
-			args[argCount - 1] = static_cast<uint16>((*it).arg_type[argCount - 1]);
-			--argCount;
+			out << m_codeTokens[i].argValue[j];
+			offset += sizeof m_codeTokens[i].argValue[j];
 		}
-		o_opcode.arg1Type = 0;
-		o_opcode.arg2Type = 0; 
-		o_opcode.arg3Type = 0;
-		if (!args.isEmpty())
+	}
+	return offset;
+}
+
+int CParser::writeDataSection(QDataStream& out)
+{
+	int offset = 0;		//size of dataSection
+	uint8 zero = 0;
+	int remainder = 0;
+	for (int i = 0; i < m_dataTokens.size(); i++)
+	{
+		m_nameGrammar[m_dataTokens[i].identifierName] = offset;
+		int dataType = static_cast<int>(m_dataTokens[i].type);
+		if (dataType)
 		{
-			o_opcode.arg1Type = args.first();
-			args.pop_back();
-			if (!args.isEmpty())
-			{
-				o_opcode.arg1Type = args.first();
-				args.pop_back();
-				if (!args.isEmpty())
-				{
-					o_opcode.arg1Type = args.first();
-					args.pop_back();
-				}
-			}
+			int typeToSize = static_cast<int> (pow(2, dataType));
+			remainder = offset % typeToSize;
+			offset += typeToSize - remainder;
 		}
+		else 
+		{
+			remainder = 0;
+		}
+		while (remainder != 0)
+		{
+			out << zero;
+			remainder--;
+		}
+		out << m_dataTokens[i].value;
+		offset += pow(2, dataType);
 		
-		o_opcode.argSize = static_cast<uint16>(pair.argument_type);
-		// write opcode in .exe
-		out << o_opcode.opcode;
-		
-		if (!(*it).arg_vlaue[0].isEmpty())
-		{
-			QString arg = (*it).arg_vlaue[0];
-			out << getArgCode(arg);
-
-			// write getArgCode(arg) in .exe
-
-			if (!(*it).arg_vlaue[1].isEmpty())
-			{
-				QString arg = (*it).arg_vlaue[1];
-				out << getArgCode(arg);
-				// write getArgCode(arg) in .exe
-
-				if (!(*it).arg_vlaue[2].isEmpty())
-				{
-					QString arg = (*it).arg_vlaue[2];
-					out << getArgCode(arg);
-					// write getArgCode(arg) in .exe
-				}
-			}
-		}
-
+		/*cout << static_cast<int>(m_dataTokens[i].type);
+		qDebug() << m_dataTokens[i].identifierName;
+		qDebug() << m_dataTokens[i].value;*/
 	}
+	return offset;
 
 }
 
-void CParser::readDataTokens(QDataStream& out)
+int CParser::writeDataTableSection(QDataStream& out)
 {
-	int name = 5;
-	for (QVector<DataToken>::iterator it = m_dataTokens.begin(); it != m_dataTokens.end(); ++it)
-	{
-		//write it.size
-		out << static_cast<int>((*it).size);
-		//write name
-		out << name;
-		nameGrammar[(*it).name] = name;
-		if (!(*it).value.isNull())
-		{
-			//write it.value
-			out << (*it).value;
-			name += 4;
-		}
-		name += 4;
+	int offset = 0;
+	for (int i = 0; i < m_dataTokens.size(); i++)
+	{                                                
+		int dataType = static_cast<int>(m_dataTokens[i].type);
+		out << dataType;
+		out << m_dataTokens[i].identifierName;
+	//	out << m_dataTokens[i].value;
+		out << m_dataTokens[i].line;
+		offset += sizeof(int) + m_dataTokens[i].identifierName.size() +
+				/*dataType +*/ sizeof(int);
 	}
+	return offset;
 }
 
-uint16 CParser::getArgCode(QString argName)
+int CParser::writeCodeTableSection(QDataStream& out)
 {
-	int regNum = argName.right(argName.size() - 1).toInt();
+	int offset = 0;
+	/*for (int i = 0; i < m_codeTokens.size(); i++)
+	{
+		out << m_codeTokens[i].opcode.opcode;
 
-	if ((argName[0] == 'R') && (regNum >= 0 && regNum <= 1023))
-	{
-		return regNum;
-	}
-	else if ((argName[0] == 'A') && (regNum >= 0 && regNum <= 3))
-	{
-		return regNum;
-	}
-	else if (argName == "IP")
-	{
-		return 4;
-	}
-	else if (argName == "TR")
-	{
-		return 5;
-	}
-	else if (argName == "SP")
-	{
-		return 6;
-	}
-	else if (argName == "SF")
-	{
-		return 7;
-	}
-	else if (argName == "FLAGS")
-	{
-		return 8;
-	}
-	else
-	{
-		return nameGrammar[argName];
-	}
-
+	}*/
+	return offset;
 }
+
+
 

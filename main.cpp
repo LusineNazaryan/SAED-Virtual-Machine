@@ -14,8 +14,8 @@ int main(int argc, char *argv[])
 {
 	QCoreApplication aaa(argc, argv);
 
-	QString FILENAME = "test.asm";
-	QFile fin(FILENAME);
+	const QString filename = "test.asm";
+	QFile fin(filename);
 	QFileInfo f_info(fin);
 
 	if (f_info.completeSuffix() != "asm")
@@ -30,31 +30,107 @@ int main(int argc, char *argv[])
 	}
 
 	QTextStream input(&fin);
+	//try
+	//{
+	//	CLexer lexer;
 
-	Lexer lex(input);
+	//	lexer.work(input);
 
-	QVector<CodeToken> o = lex.codeOut();
+	//	QVector<SCodeToken> o = lexer.getCode();
 
-	QVector<DataToken> k = lex.dataOut();
+	//	QVector<SDataToken> k = lexer.getData();
+	//	lexer.p();
+	//	for (const auto aa : k)
+	//	{
+	//		qDebug() << aa.identifierName << " line data " << aa.line << " with offset " << aa.value << " type " << static_cast<uint32>(aa.type);
+	//	}
 
+	//	for (auto a : o)
+	//	{
+	//		qDebug() << " line code" << a.line;
+	//		qDebug() << a.opcode.instr;
+	//		for (const auto i : a.argValue)
+	//		{
+	//			qDebug() << i;
+	//		}
+	//	}
+	//}
+	//catch (CError& e)
+	//{
+	//	qDebug() << e.ShowError();
+	//}
 
-	for (auto aa : k)
+	QString fileName = "test.txt";
+	QFile parseFile(fileName);
+	if (!parseFile.open(QIODevice::WriteOnly))
 	{
-		qDebug() << aa.name << " line data" << aa.line;
+		qDebug() << "error cann't open file";
 	}
+	
 
-	for (auto a : o)
+
+	QDataStream parseOut(&parseFile);
+
+	CLexer lexer;
+	lexer.work(input);
+	QVector<SDataToken> dataTokens = lexer.getData();
+	QVector<SCodeToken> codeTokens = lexer.getCode();
+	CParser parser(parseOut, dataTokens, codeTokens);
+	//parseOut << fileName;
+	parser.work();
+
+	parseFile.close();
+
+	QFile fout(fileName);
+	QFile fout2("output.asm");
+	if (!fout.open(QIODevice::ReadOnly))
 	{
-		qDebug() << a.name << " line code" << a.line;
-		for (auto i : a.arg_vlaue)
-		{
-			qDebug() << i;
-		}
+		qDebug() << "error cann't open file1";
 	}
+	QDataStream in(&fout);
 
-	CParser parser(k, o);
-	parser.output();
+	if (!fout2.open(QIODevice::ReadWrite | QIODevice::Text))
+	{
+		qDebug() << "error cann't open file2";
+	}
+	QTextStream in2(&fout2);
 
+
+	while (!in.atEnd())
+	{
+		QString signature;
+		int version;
+		int recC;
+		
+		in >> signature;
+		in2 << signature;
+		qDebug() << "signature:		" << signature;
+		in >> version;
+		in2 << version;
+		qDebug() << "version:	" << version;
+		in >> recC;
+		in2 << recC;
+		qDebug() << "recordCount:	" << recC;
+		/*in >> rec2;
+		in2 << rec2;
+		qDebug() << "record2:	" << rec2;
+		in >> rec2;
+		in2 << rec2;
+		qDebug() << "record2:	" << rec2;
+		in >> rec2;
+		in2 << rec2;
+		qDebug() << "record2:	" << rec2;
+		in >> rec2;
+		in2 << rec2;
+		qDebug() << "record2:	" << rec2;
+		QString mnac;
+		in2 << mnac;
+		qDebug() << "mnac:	" << mnac;*/
+	}
+	fout.close();
+	fout2.close();
+	
 	exit(1);
+
 	return aaa.exec();
 }
